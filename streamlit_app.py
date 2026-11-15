@@ -46,6 +46,7 @@ TEXT = {
         "admission_types": {"scheduled": "planowy", "emergency": "nagły"},
         "no_yes": ["nie", "tak"],
         "comorbidities": "Choroby współistniejące (wg rozdziałów ICD-10)",
+        "present_on_admission": "Obecne w chwili przyjęcia do szpitala.",
         "chapters": {"C": "Nowotwory (C)", "D": "Choroby krwi i narządów krwiotwórczych (D)",
                      "E": "Choroby endokrynologiczne i metaboliczne (E)",
                      "I": "Choroby układu krążenia (I)", "J": "Choroby układu oddechowego (J)",
@@ -54,6 +55,7 @@ TEXT = {
         "calculate": "Oblicz",
         "reset": "Resetuj",
         "risk": "Przewidywane ryzyko zgonu wewnątrzszpitalnego",
+        "mortality": "Średnia śmiertelność wewnątrzszpitalna w {cohort} ({year}): {rate}",
         "placeholder": "Wynik pojawi się po kliknięciu „Oblicz”.",
         "decimal": ",",
         "labels": "labels",
@@ -70,6 +72,7 @@ TEXT = {
         "admission_types": {"scheduled": "elective", "emergency": "emergency"},
         "no_yes": ["no", "yes"],
         "comorbidities": "Comorbidities (by ICD-10 chapter)",
+        "present_on_admission": "Present on admission.",
         "chapters": {"C": "Neoplasms (C)", "D": "Diseases of the blood (D)",
                      "E": "Endocrine, nutritional and metabolic diseases (E)",
                      "I": "Diseases of the circulatory system (I)",
@@ -79,6 +82,7 @@ TEXT = {
         "calculate": "Calculate",
         "reset": "Reset",
         "risk": "Predicted in-hospital mortality risk",
+        "mortality": "Average in-hospital mortality in {cohort} ({year}): {rate}",
         "placeholder": "The result will appear after clicking “Calculate”.",
         "decimal": ".",
         "labels": "labels_en",
@@ -90,6 +94,10 @@ TEXT = {
 def load_model(cohort):
     meta = json.loads((MODEL_DIR / f"{cohort}.json").read_text())
     return joblib.load(MODEL_DIR / f"{cohort}.joblib"), meta
+
+
+def percent(x, text):
+    return f"{100 * x:.1f}%".replace(".", text["decimal"])
 
 
 def short_label(label):
@@ -129,6 +137,8 @@ assert used <= {"wiek", "pilneplanowe", "weekend", *sum(chapters.values(), [])},
     "model input not in the form"
 for key, value in defaults().items():
     st.session_state.setdefault(key, value)
+    # keeps inputs when their labels change language (Streamlit widget-state docs)
+    st.session_state[key] = st.session_state[key]
 
 language = st.session_state.get("language", "PL")
 text = TEXT[language]
@@ -160,7 +170,7 @@ with inputs_col:
     for c in sum(chapters.values(), []):
         if c not in in_model:
             st.session_state[c] = False
-    st.markdown(f"**{text['comorbidities']}**")
+    st.markdown(f"**{text['comorbidities']}** :small[:gray[{text['present_on_admission']}]]")
     left, right = st.columns(2)
     for chapter, cols in chapters.items():
         with left if chapter in LEFT_CHAPTERS else right:
@@ -176,11 +186,15 @@ with inputs_col:
         st.session_state.calculated = True
     clear.button(text["reset"], on_click=reset, width="stretch")
 
+mortality = text["mortality"].format(cohort=text["cohorts"][cohort].split(" ")[0],
+                                     year=meta["mortality"]["year"],
+                                     rate=percent(meta["mortality"]["rate"], text))
 with result_col:
     if st.session_state.calculated:
         X = pd.DataFrame([row])[list(model.feature_names_in_)]
         risk = model.predict_proba(X)[0, 1]
-        st.metric(text["risk"], f"{100 * risk:.1f}%".replace(".", text["decimal"]))
+        st.metric(text["risk"], percent(risk, text))
+        st.caption(mortality)
         sv = explanation(model, meta, X, text)
         shap.plots.waterfall(sv, max_display=len(sv.values), show=False)
         fig = plt.gcf()
@@ -190,5 +204,6 @@ with result_col:
                   bbox_inches=Bbox.from_extents(PLOT_X[0], box.y0, PLOT_X[1], box.y1))
     else:
         st.metric(text["risk"], "—")
+        st.caption(mortality)
         with st.container(border=True, height=PLACEHOLDER_HEIGHT):
             st.caption(text["placeholder"])

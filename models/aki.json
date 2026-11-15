@@ -1,4 +1,8 @@
 {
+  "mortality": {
+    "year": 2021,
+    "rate": 0.21700982686008424
+  },
   "features_out": [
     "wiek",
     "pilneplanowe_emergency",
