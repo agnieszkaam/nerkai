@@ -29,6 +29,9 @@ CHAPTERS = {
     "K": ["liver_disease", "peptic_ulcer"],
 }
 LEFT_CHAPTERS = ["C", "D", "E"]
+ABSTRACT = ("Mazurek A, Grudziąż-Sękowska J, Jankowski M. Modele uczenia maszynowego w "
+            "przewidywaniu zgonu wewnątrzszpitalnego i przedłużonej hospitalizacji u pacjentów z "
+            "ostrym uszkodzeniem nerek i przewlekłą chorobą nerek.")
 PAPERS = ["10.5114/aoms/210331", "10.1186/s12882-026-04885-2"]
 # fixed plot width (inches): same image size in both languages and for every patient
 PLOT_X = (-2.9, 7.9)
@@ -55,9 +58,11 @@ TEXT = {
         "calculate": "Oblicz",
         "reset": "Resetuj",
         "risk": "Przewidywane ryzyko zgonu wewnątrzszpitalnego",
-        "mortality": "Średnia śmiertelność wewnątrzszpitalna w {cohort} ({year}): {rate}",
-        "placeholder": "Wynik pojawi się po kliknięciu „Oblicz”.",
+        "reference_risk": "Średnie przewidywane ryzyko w {cohort} ({year}): {rate}",
         "decimal": ",",
+        "footnote": "Kalkulator opracowano w ramach abstraktu prezentowanego na IV Forum Młodych "
+                    "Naukowców:",
+        "abstract_language": "",
         "labels": "labels",
     },
     "EN": {
@@ -82,9 +87,11 @@ TEXT = {
         "calculate": "Calculate",
         "reset": "Reset",
         "risk": "Predicted in-hospital mortality risk",
-        "mortality": "Average in-hospital mortality in {cohort} ({year}): {rate}",
-        "placeholder": "The result will appear after clicking “Calculate”.",
+        "reference_risk": "Average predicted risk in {cohort} ({year}): {rate}",
         "decimal": ".",
+        "footnote": "This calculator was developed as part of the abstract presented at the "
+                    "IV Forum Młodych Naukowców (4th Young Scientists' Forum):",
+        "abstract_language": " [in Polish]",
         "labels": "labels_en",
     },
 }
@@ -148,8 +155,7 @@ st.set_page_config(page_title=text["page_title"], layout="wide")
 title, switch = st.columns([6, 1], vertical_alignment="center")
 title.header(text["title"])
 switch.radio("PL/EN", list(TEXT), horizontal=True, key="language", label_visibility="collapsed")
-st.caption(f"{text['caption']}  \n{text['papers']}: "
-           + " · ".join(f"[https://doi.org/{doi}](https://doi.org/{doi})" for doi in PAPERS))
+st.caption(text["caption"])
 inputs_col, result_col = st.columns(2, gap="large")
 
 with inputs_col:
@@ -186,24 +192,34 @@ with inputs_col:
         st.session_state.calculated = True
     clear.button(text["reset"], on_click=reset, width="stretch")
 
-mortality = text["mortality"].format(cohort=text["cohorts"][cohort].split(" ")[0],
-                                     year=meta["mortality"]["year"],
-                                     rate=percent(meta["mortality"]["rate"], text))
+reference_risk = text["reference_risk"].format(cohort=text["cohorts"][cohort].split(" ")[0],
+                                               year=meta["reference_risk"]["year"],
+                                               rate=percent(meta["reference_risk"]["mean"], text))
 with result_col:
     if st.session_state.calculated:
         X = pd.DataFrame([row])[list(model.feature_names_in_)]
         risk = model.predict_proba(X)[0, 1]
-        st.metric(text["risk"], percent(risk, text))
-        st.caption(mortality)
-        sv = explanation(model, meta, X, text)
-        shap.plots.waterfall(sv, max_display=len(sv.values), show=False)
-        fig = plt.gcf()
-        box = fig.get_tightbbox()
-        # shap text is black: white background on the dark theme
-        st.pyplot(fig, clear_figure=True, transparent=st.context.theme.type != "dark",
-                  bbox_inches=Bbox.from_extents(PLOT_X[0], box.y0, PLOT_X[1], box.y1))
+        st.markdown(f"**{text['risk']}**")
+        st.metric(text["risk"], percent(risk, text), label_visibility="collapsed")
+        st.caption(reference_risk)
+        with st.spinner():
+            sv = explanation(model, meta, X, text)
+            shap.plots.waterfall(sv, max_display=len(sv.values), show=False)
+            fig = plt.gcf()
+            box = fig.get_tightbbox()
+            # shap text is black: white background on the dark theme
+            st.pyplot(fig, clear_figure=True, transparent=st.context.theme.type != "dark",
+                      bbox_inches=Bbox.from_extents(PLOT_X[0], box.y0, PLOT_X[1], box.y1))
     else:
-        st.metric(text["risk"], "—")
-        st.caption(mortality)
-        with st.container(border=True, height=PLACEHOLDER_HEIGHT):
-            st.caption(text["placeholder"])
+        st.markdown(f"**{text['risk']}**")
+        st.metric(text["risk"], "—", label_visibility="collapsed")
+        st.caption(reference_risk)
+        # st.container has no background option: grey fill via its key class
+        st.html("<style>.st-key-placeholder {background: rgba(128, 128, 128, 0.1);}</style>")
+        with st.container(border=True, height=PLACEHOLDER_HEIGHT, key="placeholder",
+                          horizontal_alignment="center", vertical_alignment="center"):
+            st.header(":gray[:material/waterfall_chart:]", anchor=False, width="content")
+
+st.divider()
+st.caption(f"{text['footnote']}  \n{ABSTRACT}{text['abstract_language']}  \n{text['papers']}: "
+           + " · ".join(f"[https://doi.org/{doi}](https://doi.org/{doi})" for doi in PAPERS))

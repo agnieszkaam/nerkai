@@ -1,7 +1,7 @@
 {
-  "mortality": {
+  "reference_risk": {
     "year": 2021,
-    "rate": 0.21700982686008424
+    "mean": 0.22197199922728061
   },
   "features_out": [
     "wiek",
