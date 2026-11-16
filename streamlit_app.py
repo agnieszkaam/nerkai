@@ -67,7 +67,7 @@ TEXT = {
         "footnote": "Kalkulator opracowano w ramach abstraktu prezentowanego na IV Forum Młodych "
                     "Naukowców:",
         "abstract_language": "",
-        "waterfall_note": "Wkład poszczególnych zmiennych w predykcję ryzyka zgonu.",
+        "waterfall_note": "Znaczenie poszczególnych zmiennych w predykcji ryzyka zgonu.",
         "labels": "labels",
     },
     "EN": {
