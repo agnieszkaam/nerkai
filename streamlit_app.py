@@ -2,6 +2,9 @@
 plot per patient. Polish and English.
 
 Run: streamlit run streamlit_app.py
+
+Claude Opus 5.5 (Anthropic), via Claude Code, was used to align the code with library
+documentation and best practices. All analytical decisions were made by the author.
 """
 import json
 import re
@@ -143,8 +146,10 @@ def localise_waterfall(fig, text):
         lambda v, _: f"{v:g}".replace(".", text["decimal"]).replace("-", "\u2212")))
     for t in bars.texts:
         t.set_text(t.get_text().replace(".", text["decimal"]))
+    # shap writes these labels in mathtext, where a bare comma gets punctuation spacing
+    math_decimal = "{,}" if text["decimal"] == "," else "."
     for ax in value_axes:
-        ax.set_xticklabels([t.get_text().replace(".", text["decimal"])
+        ax.set_xticklabels([t.get_text().replace(".", math_decimal)
                             for t in ax.get_xticklabels()])
 
 
