@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import shap
 import streamlit as st
+from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import Bbox
 
 MODEL_DIR = Path(__file__).resolve().parent / "models"
@@ -63,6 +64,7 @@ TEXT = {
         "footnote": "Kalkulator opracowano w ramach abstraktu prezentowanego na IV Forum Młodych "
                     "Naukowców:",
         "abstract_language": "",
+        "waterfall_note": "Wkład poszczególnych zmiennych w predykcję ryzyka zgonu.",
         "labels": "labels",
     },
     "EN": {
@@ -92,6 +94,7 @@ TEXT = {
         "footnote": "This calculator was developed as part of the abstract presented at the "
                     "IV Forum Młodych Naukowców (4th Young Scientists' Forum):",
         "abstract_language": " [in Polish]",
+        "waterfall_note": "Contribution of each variable to the predicted risk of death.",
         "labels": "labels_en",
     },
 }
@@ -112,18 +115,37 @@ def short_label(label):
     return re.sub(r" \(.*\)$", "", label)
 
 
-def explanation(model, meta, X, text):
-    """SHAP values of the logistic regression with the training data as background:
-    coef * (x - training mean) on the log-odds scale."""
-    prep, lr = model.named_steps["prep"], model.named_steps["model"]
-    z = prep.transform(X)[0]
+@st.cache_resource
+def explainer(cohort):
+    """shap.LinearExplainer (log-odds scale) with the training data as background, given as
+    the mean and covariance of the transformed features."""
+    model, meta = models[cohort]
+    return shap.LinearExplainer(model.named_steps["model"],
+                                (np.array(meta["train_mean"]), np.array(meta["train_cov"])))
+
+
+def explanation(cohort, X, text):
+    model, meta = models[cohort]
+    z = model.named_steps["prep"].transform(X)
+    sv = explainer(cohort)(z)[0]
     names = meta["features_out"]
     shown = [str(int(X["wiek"].iloc[0])) if f == "wiek" else text["no_yes"][int(v)]
-             for f, v in zip(names, z)]
-    return shap.Explanation(lr.coef_[0] * (z - np.array(meta["train_mean"])),
-                            base_values=meta["reference_logodds"],
+             for f, v in zip(names, z[0])]
+    return shap.Explanation(sv.values, base_values=sv.base_values,
                             data=np.array(shown, dtype=object),
                             feature_names=[short_label(meta[text["labels"]][f]) for f in names])
+
+
+def localise_waterfall(fig, text):
+    """Decimal separator of the language in shap's waterfall (values, axis, E[f(X)] / f(x))."""
+    bars, *value_axes = fig.axes
+    bars.xaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: f"{v:g}".replace(".", text["decimal"]).replace("-", "\u2212")))
+    for t in bars.texts:
+        t.set_text(t.get_text().replace(".", text["decimal"]))
+    for ax in value_axes:
+        ax.set_xticklabels([t.get_text().replace(".", text["decimal"])
+                            for t in ax.get_xticklabels()])
 
 
 def defaults():
@@ -203,13 +225,15 @@ with result_col:
         st.metric(text["risk"], percent(risk, text), label_visibility="collapsed")
         st.caption(reference_risk)
         with st.spinner():
-            sv = explanation(model, meta, X, text)
+            sv = explanation(cohort, X, text)
             shap.plots.waterfall(sv, max_display=len(sv.values), show=False)
             fig = plt.gcf()
+            localise_waterfall(fig, text)
             box = fig.get_tightbbox()
             # shap text is black: white background on the dark theme
             st.pyplot(fig, clear_figure=True, transparent=st.context.theme.type != "dark",
                       bbox_inches=Bbox.from_extents(PLOT_X[0], box.y0, PLOT_X[1], box.y1))
+        st.caption(text["waterfall_note"])
     else:
         st.markdown(f"**{text['risk']}**")
         st.metric(text["risk"], "—", label_visibility="collapsed")
@@ -219,6 +243,7 @@ with result_col:
         with st.container(border=True, height=PLACEHOLDER_HEIGHT, key="placeholder",
                           horizontal_alignment="center", vertical_alignment="center"):
             st.header(":gray[:material/waterfall_chart:]", anchor=False, width="content")
+        st.caption(text["waterfall_note"])
 
 st.divider()
 st.caption(f"{text['footnote']}  \n{ABSTRACT}{text['abstract_language']}  \n{text['papers']}: "
