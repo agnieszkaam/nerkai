@@ -6,20 +6,11 @@ Run: streamlit run streamlit_app.py
 Claude Opus 5.5 (Anthropic), via Claude Code, was used to align the code with library
 documentation and best practices. All analytical decisions were made by the author.
 """
-import json
-import re
-from pathlib import Path
-
-import joblib
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-import shap
 import streamlit as st
-from matplotlib.ticker import FuncFormatter
-from matplotlib.transforms import Bbox
 
-MODEL_DIR = Path(__file__).resolve().parent / "models"
+from plotting import load_model, short_label, waterfall_png
+
 COHORTS = ["aki", "ckd"]
 ADMISSION = ["scheduled", "emergency"]
 CHAPTERS = {
@@ -63,6 +54,7 @@ TEXT = {
         "reset": "Resetuj",
         "risk": "Przewidywane ryzyko zgonu wewnątrzszpitalnego",
         "reference_risk": "Średnie przewidywane ryzyko w {cohort} ({year}): {rate}",
+        "inputs_changed": "Dane zostały zmienione. Kliknij „Oblicz”, aby przeliczyć.",
         "decimal": ",",
         "footnote": "Kalkulator opracowano w ramach abstraktu prezentowanego na IV Forum Młodych "
                     "Naukowców:",
@@ -93,6 +85,7 @@ TEXT = {
         "reset": "Reset",
         "risk": "Predicted in-hospital mortality risk",
         "reference_risk": "Average predicted risk in {cohort} ({year}): {rate}",
+        "inputs_changed": "Inputs have changed. Click “Calculate” to recalculate.",
         "decimal": ".",
         "footnote": "This calculator was developed as part of the abstract presented at the "
                     "IV Forum Młodych Naukowców (4th Young Scientists' Forum):",
@@ -103,59 +96,22 @@ TEXT = {
 }
 
 
-@st.cache_resource
-def load_model(cohort):
-    meta = json.loads((MODEL_DIR / f"{cohort}.json").read_text())
-    return joblib.load(MODEL_DIR / f"{cohort}.joblib"), meta
+# ~270 KB per plot: at most ~27 MB; repeated inputs are shown without recomputing
+@st.cache_data(max_entries=100, show_spinner=False)
+def waterfall(cohort, row, language, dark):
+    text = TEXT[language]
+    # shap text is black: white background on the dark theme
+    return waterfall_png(cohort, row, text["labels"], text["no_yes"], text["decimal"], PLOT_X,
+                         transparent=not dark)
 
 
 def percent(x, text):
     return f"{100 * x:.1f}%".replace(".", text["decimal"])
 
 
-def short_label(label):
-    """Label without the ICD-10 codes in brackets."""
-    return re.sub(r" \(.*\)$", "", label)
-
-
-@st.cache_resource
-def explainer(cohort):
-    """shap.LinearExplainer (log-odds scale) with the training data as background, given as
-    the mean and covariance of the transformed features."""
-    model, meta = models[cohort]
-    return shap.LinearExplainer(model.named_steps["model"],
-                                (np.array(meta["train_mean"]), np.array(meta["train_cov"])))
-
-
-def explanation(cohort, X, text):
-    model, meta = models[cohort]
-    z = model.named_steps["prep"].transform(X)
-    sv = explainer(cohort)(z)[0]
-    names = meta["features_out"]
-    shown = [str(int(X["wiek"].iloc[0])) if f == "wiek" else text["no_yes"][int(v)]
-             for f, v in zip(names, z[0])]
-    return shap.Explanation(sv.values, base_values=sv.base_values,
-                            data=np.array(shown, dtype=object),
-                            feature_names=[short_label(meta[text["labels"]][f]) for f in names])
-
-
-def localise_waterfall(fig, text):
-    """Decimal separator of the language in shap's waterfall (values, axis, E[f(X)] / f(x))."""
-    bars, *value_axes = fig.axes
-    bars.xaxis.set_major_formatter(FuncFormatter(
-        lambda v, _: f"{v:g}".replace(".", text["decimal"]).replace("-", "\u2212")))
-    for t in bars.texts:
-        t.set_text(t.get_text().replace(".", text["decimal"]))
-    # shap writes these labels in mathtext, where a bare comma gets punctuation spacing
-    math_decimal = "{,}" if text["decimal"] == "," else "."
-    for ax in value_axes:
-        ax.set_xticklabels([t.get_text().replace(".", math_decimal)
-                            for t in ax.get_xticklabels()])
-
-
 def defaults():
     return {"cohort": COHORTS[0], "wiek": 70, "pilneplanowe": ADMISSION[0], "weekend": 0,
-            "calculated": False} | {c: False for c in sum(chapters.values(), [])}
+            "result": None} | {c: False for c in sum(chapters.values(), [])}
 
 
 def reset():
@@ -198,7 +154,7 @@ with inputs_col:
                                    format_func=lambda v: text["no_yes"][v], horizontal=True,
                                    key="weekend")
 
-    model, meta = models[cohort]
+    model, _ = models[cohort]
     in_model = set(model.feature_names_in_)
     for c in sum(chapters.values(), []):
         if c not in in_model:
@@ -214,30 +170,31 @@ with inputs_col:
                                          help=", ".join(codes[c]) if c in in_model else
                                          f"{text['not_in_model']}  \n" + ", ".join(codes[c])))
 
+    current = {"cohort": cohort, "row": {c: row[c] for c in model.feature_names_in_}}
     calculate, clear, _ = st.columns([1, 1, 4])
+    # the result is computed for the inputs at the last click, not on every input change
     if calculate.button(text["calculate"], type="primary", width="stretch"):
-        st.session_state.calculated = True
+        st.session_state.result = current
     clear.button(text["reset"], on_click=reset, width="stretch")
 
-reference_risk = text["reference_risk"].format(cohort=text["cohorts"][cohort].split(" ")[0],
-                                               year=meta["reference_risk"]["year"],
-                                               rate=percent(meta["reference_risk"]["mean"], text))
+result = st.session_state.result
+shown_cohort = result["cohort"] if result else cohort
+shown_model, shown_meta = models[shown_cohort]
+reference_risk = text["reference_risk"].format(
+    cohort=text["cohorts"][shown_cohort].split(" ")[0], year=shown_meta["reference_risk"]["year"],
+    rate=percent(shown_meta["reference_risk"]["mean"], text))
 with result_col:
-    if st.session_state.calculated:
-        X = pd.DataFrame([row])[list(model.feature_names_in_)]
-        risk = model.predict_proba(X)[0, 1]
+    if result:
+        X = pd.DataFrame([result["row"]])[list(shown_model.feature_names_in_)]
+        risk = shown_model.predict_proba(X)[0, 1]
         st.markdown(f"**{text['risk']}**")
         st.metric(text["risk"], percent(risk, text), label_visibility="collapsed")
         st.caption(reference_risk)
+        if result != current:
+            st.caption(f":red[{text['inputs_changed']}]")
         with st.spinner():
-            sv = explanation(cohort, X, text)
-            shap.plots.waterfall(sv, max_display=len(sv.values), show=False)
-            fig = plt.gcf()
-            localise_waterfall(fig, text)
-            box = fig.get_tightbbox()
-            # shap text is black: white background on the dark theme
-            st.pyplot(fig, clear_figure=True, transparent=st.context.theme.type != "dark",
-                      bbox_inches=Bbox.from_extents(PLOT_X[0], box.y0, PLOT_X[1], box.y1))
+            st.image(waterfall(result["cohort"], result["row"], language,
+                               st.context.theme.type == "dark"), width="stretch")
         st.caption(text["waterfall_note"])
     else:
         st.markdown(f"**{text['risk']}**")
