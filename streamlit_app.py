@@ -61,6 +61,7 @@ TEXT = {
         "footnote": "Kalkulator opracowano w ramach abstraktu prezentowanego na IV Forum Młodych "
                     "Naukowców:",
         "abstract_language": "",
+        "show_plot": "Pokaż wykres wyjaśniający",
         "waterfall_note": "Znaczenie poszczególnych zmiennych w predykcji ryzyka zgonu.",
         "labels": "labels",
     },
@@ -91,8 +92,9 @@ TEXT = {
         "inputs_changed": "Inputs have changed. Click “Calculate” to recalculate.",
         "decimal": ".",
         "footnote": "This calculator was developed as part of the abstract presented at the "
-                    "IV Forum Młodych Naukowców (4th Young Scientists' Forum):",
+                    "IV Forum Młodych Naukowców:",
         "abstract_language": " [in Polish]",
+        "show_plot": "Show explanatory plot",
         "waterfall_note": "Contribution of each variable to the predicted risk of death.",
         "labels": "labels_en",
     },
@@ -114,7 +116,7 @@ def percent(x, text):
 
 def defaults():
     return {"cohort": COHORTS[0], "wiek": 70.0, "pilneplanowe": ADMISSION[0], "weekend": 0,
-            "result": None} | {c: False for c in sum(chapters.values(), [])}
+            "result": None, "show_plot": False} | {c: False for c in sum(chapters.values(), [])}
 
 
 def reset():
@@ -202,27 +204,33 @@ reference_risk = text["reference_risk"].format(
     cohort=text["cohorts"][shown_cohort].split(" ")[0], year=shown_meta["reference_risk"]["year"],
     rate=percent(shown_meta["reference_risk"]["mean"], text))
 with result_col:
+    st.markdown(f"**{text['risk']}**")
     if result:
         X = pd.DataFrame([result["row"]])[list(shown_model.feature_names_in_)]
         risk = shown_model.predict_proba(X)[0, 1]
-        st.markdown(f"**{text['risk']}**")
         st.metric(text["risk"], percent(risk, text), label_visibility="collapsed")
-        st.caption(reference_risk)
-        if result != current:
-            st.caption(f":red[{text['inputs_changed']}]")
-        with st.spinner():
-            st.image(waterfall(result["cohort"], result["row"], language,
-                               st.context.theme.type == "dark"), width="stretch")
-        st.caption(text["waterfall_note"])
     else:
-        st.markdown(f"**{text['risk']}**")
         st.metric(text["risk"], "—", label_visibility="collapsed")
-        st.caption(reference_risk)
+    st.caption(reference_risk)
+    if result and result != current:
+        st.caption(f":red[{text['inputs_changed']}]")
+    show_plot = st.toggle(text["show_plot"], key="show_plot")
+    plot_args = (result["cohort"], result["row"], language, st.context.theme.type == "dark") \
+        if result else None
+    if show_plot and result:
+        with st.spinner():
+            st.image(waterfall(*plot_args), width="stretch")
+    elif result:
+        # drawn after every click even when hidden (the risk above is already shown), so that
+        # switching the plot on takes it from the cache
+        waterfall(*plot_args)
+    elif show_plot:
         # st.container has no background option: grey fill via its key class
         st.html("<style>.st-key-placeholder {background: rgba(128, 128, 128, 0.1);}</style>")
         with st.container(border=True, height=PLACEHOLDER_HEIGHT, key="placeholder",
                           horizontal_alignment="center", vertical_alignment="center"):
             st.header(":gray[:material/waterfall_chart:]", anchor=False, width="content")
+    if show_plot:
         st.caption(text["waterfall_note"])
 
 st.divider()
