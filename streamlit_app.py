@@ -31,6 +31,7 @@ PAPERS = ["10.5114/aoms/210331", "10.1186/s12882-026-04885-2"]
 # fixed plot width (inches): same image size in both languages and for every patient
 PLOT_X = (-2.9, 7.9)
 PLACEHOLDER_HEIGHT = 420  # px
+AGE_RANGE = (18, 110)
 TEXT = {
     "PL": {
         "page_title": "Kalkulator ryzyka zgonu",
@@ -40,6 +41,7 @@ TEXT = {
         "diagnosis": "Rozpoznanie zasadnicze",
         "cohorts": {"aki": "AKI (N17)", "ckd": "PChN (N18)"},
         "age": "Wiek (w latach)",
+        "age_invalid": "Podaj wiek w pełnych latach, od 18 do 110.",
         "admission": "Tryb przyjęcia",
         "admission_types": {"scheduled": "planowy", "emergency": "nagły"},
         "no_yes": ["nie", "tak"],
@@ -70,6 +72,7 @@ TEXT = {
         "diagnosis": "Principal diagnosis",
         "cohorts": {"aki": "AKI (N17)", "ckd": "CKD (N18)"},
         "age": "Age (years)",
+        "age_invalid": "Enter age in whole years, from 18 to 110.",
         "admission": "Admission type",
         "admission_types": {"scheduled": "elective", "emergency": "emergency"},
         "no_yes": ["no", "yes"],
@@ -110,7 +113,7 @@ def percent(x, text):
 
 
 def defaults():
-    return {"cohort": COHORTS[0], "wiek": 70, "pilneplanowe": ADMISSION[0], "weekend": 0,
+    return {"cohort": COHORTS[0], "wiek": 70.0, "pilneplanowe": ADMISSION[0], "weekend": 0,
             "result": None} | {c: False for c in sum(chapters.values(), [])}
 
 
@@ -135,6 +138,9 @@ text = TEXT[language]
 labels = {k: v for _, meta in models.values() for k, v in meta[text["labels"]].items()}
 
 st.set_page_config(page_title=text["page_title"], layout="wide")
+# st.badge has no wrap option: long chapter names wrap instead of being cut off with "…"
+st.html("<style>.stMarkdown [data-testid='stMarkdownContainer'] span.stMarkdownBadge "
+        "{white-space: normal;}</style>")
 title, switch = st.columns([6, 1], vertical_alignment="center")
 title.header(text["title"])
 switch.radio("PL/EN", list(TEXT), horizontal=True, key="language", label_visibility="collapsed")
@@ -145,7 +151,16 @@ with inputs_col:
     diagnosis, age = st.columns(2)
     cohort = diagnosis.radio(text["diagnosis"], COHORTS, format_func=text["cohorts"].get,
                              horizontal=True, key="cohort")
-    row = {"wiek": age.number_input(text["age"], min_value=18, max_value=110, key="wiek")}
+    # float, no min_value / max_value: the widget would silently round a decimal or revert an
+    # out-of-range value, so both are rejected here instead
+    age_value = age.number_input(text["age"], step=1.0, format="%g", key="wiek")
+    age_ok = (age_value is not None and age_value.is_integer()
+              and AGE_RANGE[0] <= age_value <= AGE_RANGE[1])
+    row = {"wiek": int(age_value) if age_ok else age_value}
+    if not age_ok:
+        age.caption(f":red[{text['age_invalid']}]")
+        # st.number_input has no error state: red border via its key class
+        st.html("<style>.st-key-wiek [data-baseweb='input'] {border-color: red;}</style>")
     admission, weekend = st.columns(2)
     row["pilneplanowe"] = admission.radio(text["admission"], ADMISSION,
                                           format_func=text["admission_types"].get,
@@ -171,11 +186,14 @@ with inputs_col:
                                          f"{text['not_in_model']}  \n" + ", ".join(codes[c])))
 
     current = {"cohort": cohort, "row": {c: row[c] for c in model.feature_names_in_}}
-    calculate, clear, _ = st.columns([1, 1, 4])
+    buttons = st.container(horizontal=True)
     # the result is computed for the inputs at the last click, not on every input change
-    if calculate.button(text["calculate"], type="primary", width="stretch"):
-        st.session_state.result = current
-    clear.button(text["reset"], on_click=reset, width="stretch")
+    if buttons.button(text["calculate"], type="primary"):
+        if age_ok:
+            st.session_state.result = current
+        else:
+            st.caption(f":red[{text['age_invalid']}]")
+    buttons.button(text["reset"], on_click=reset)
 
 result = st.session_state.result
 shown_cohort = result["cohort"] if result else cohort
